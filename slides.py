@@ -54,12 +54,18 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         slider_layout = QtWidgets.QHBoxLayout()
 
         # Create a horizontal slider
-        self.horizontalSlider = QtWidgets.QSlider(parent=self.centralwidget)
-        self.horizontalSlider.setOrientation(QtCore.Qt.Orientation.Horizontal)
-        self.horizontalSlider.setRange(0, 100)
-        slider_layout.addWidget(self.horizontalSlider)  # Add horizontal slider to the slider layout
+        self.steeringlSlider = QtWidgets.QSlider(parent=self.centralwidget)
+        self.steeringlSlider.setOrientation(QtCore.Qt.Orientation.Horizontal)
+        self.steeringlSlider.setRange(0, 100)
+        slider_layout.addWidget(self.steeringlSlider)  # Add horizontal slider to the slider layout
 
-        # Create a vertical slider
+        # Create a vertical slider for throttle
+        self.breakSlider = QtWidgets.QSlider(parent=self.centralwidget)
+        self.breakSlider.setOrientation(QtCore.Qt.Orientation.Vertical)
+        self.breakSlider.setRange(0, 100)
+        slider_layout.addWidget(self.breakSlider)  # Add vertical slider to the slider layout
+
+        # Create a vertical slider for throttle
         self.verticalSlider = QtWidgets.QSlider(parent=self.centralwidget)
         self.verticalSlider.setOrientation(QtCore.Qt.Orientation.Vertical)
         self.verticalSlider.setRange(0, 100)
@@ -119,7 +125,7 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
 
         # Connect button click and slider value changes
         self.pushButton.clicked.connect(self.resetTHROTTLE)
-        self.horizontalSlider.valueChanged.connect(self.DataUpdate)
+        self.steeringlSlider.valueChanged.connect(self.DataUpdate)
         self.verticalSlider.valueChanged.connect(self.DataUpdate)
 
     def retranslateUi(self, MainWindow):
@@ -159,10 +165,10 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.DataUpdate()
 
     def DataUpdate(self):
-        h_value = self.horizontalSlider.value()
+        h_value = self.steeringlSlider.value()
         v_value = self.verticalSlider.value()
         if self.serial_port and self.serial_port.is_open:
-            message = "H-" + f"{h_value:03}" + ", V-" + f"{v_value:03}\n"
+            message = "S-" + f"{h_value:03}" + ", V-" + f"{v_value:03}\n"
             self.serial_port.write(message.encode())
             print(f"Sent to Arduino: {message.strip()}")
         self.label.setText("H-" + f"{h_value:03}" + ", V-" + f"{v_value:03}\n")
