@@ -178,7 +178,6 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
     def incrementSlider(self):
         """Gradually increase the slider value"""
         if not self.is_W_pressed:  # If "W" is not pressed, stop the timer
-            self.verticalSlider.setValue(0)
             return
 
         current_value = self.verticalSlider.value()
