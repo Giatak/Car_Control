@@ -2,15 +2,23 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 import serial
 from time import sleep
 
-#H-000, V-020
-
 class Ui_MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.serial_port = None
         self.setupUi(self)
         self.setupSerial()
-    
+
+        # Timer to handle the gradual increase of the vertical slider value
+        self.timer = QtCore.QTimer(self)
+        self.timer.setInterval(30)  # Adjust the interval to control speed
+        self.timer.timeout.connect(self.incrementSlider)
+
+        self.is_W_pressed = False
+        self.start_value = 10
+        self.max_value = 100
+        self.verticalSlider.setValue(0)  # Start slider at 0
+
     def setupSerial(self):
         # Set up serial port (replace 'COM3' with your Arduino port)
         try:
@@ -31,7 +39,7 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         # Create a vertical layout to organize the main components
         main_layout = QtWidgets.QVBoxLayout(self.centralwidget)
 
-        #Create a horixontal layout for the label status
+        # Create a horizontal layout for the label status
         status_layout = QtWidgets.QHBoxLayout()
 
         # Create a label to display all the control's data
@@ -167,27 +175,29 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
             print("Serial port closed.")
         event.accept()
 
-    def keyPressEvent(self, event):
-        if event.key() == QtCore.Qt.Key.Key_1:
+    def incrementSlider(self):
+        """Gradually increase the slider value"""
+        if not self.is_W_pressed:  # If "W" is not pressed, stop the timer
             self.verticalSlider.setValue(0)
-        elif event.key() == QtCore.Qt.Key.Key_2:
-            self.verticalSlider.setValue(10)
-        elif event.key() == QtCore.Qt.Key.Key_3:
-            self.verticalSlider.setValue(20)
-        elif event.key() == QtCore.Qt.Key.Key_4:
-            self.verticalSlider.setValue(30)
-        elif event.key() == QtCore.Qt.Key.Key_5:
-            self.verticalSlider.setValue(40)
-        elif event.key() == QtCore.Qt.Key.Key_6:
-            self.verticalSlider.setValue(50)
-        elif event.key() == QtCore.Qt.Key.Key_7:
-            self.verticalSlider.setValue(60)
-        elif event.key() == QtCore.Qt.Key.Key_8:
-            self.verticalSlider.setValue(70)
-        elif event.key() == QtCore.Qt.Key.Key_9:
-            self.verticalSlider.setValue(80)
-        elif event.key() == QtCore.Qt.Key.Key_0:
-            self.verticalSlider.setValue(100)
+            return
+
+        current_value = self.verticalSlider.value()
+        if current_value < self.max_value:
+            self.verticalSlider.setValue(min(current_value + 5, self.max_value))  # Increase in steps of 5
+            self.DataUpdate()  # Update the label and send data to Arduino when the value changes
+
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key.Key_W and not self.is_W_pressed:
+            self.is_W_pressed = True
+            if not self.timer.isActive():  # Start timer only when the key is pressed
+                self.timer.start()  
+        elif event.key() == QtCore.Qt.Key.Key_S:
+            self.verticalSlider.setValue(0)
+            self.DataUpdate()  # Update the label and send data when the value changes
+
+    def keyReleaseEvent(self, event):
+        if event.key() == QtCore.Qt.Key.Key_W:
+            self.is_W_pressed = False  # Stop the incrementing when the key is released
 
 if __name__ == "__main__":
     import sys
