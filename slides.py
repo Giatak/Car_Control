@@ -155,7 +155,7 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.retranslateUi(MainWindow)
 
         # Connect button click and slider value changes
-        self.pushButton.clicked.connect(self.resetTHROTTLE)
+        self.pushButton.clicked.connect(self.resetControls)
         self.steeringlSlider.valueChanged.connect(self.DataUpdate)
         self.throttleSlider.valueChanged.connect(self.DataUpdate)
         self.brakeSlider.valueChanged.connect(self.DataUpdate)
@@ -168,22 +168,24 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.pushButton.setText(_translate("MainWindow", "RESET THROTTLE"))
         self.pushButton.setShortcut(_translate("MainWindow", "Space"))
 
-    def resetTHROTTLE(self):
+    def resetControls(self):
         self.throttleSlider.setValue(0)
         self.brakeSlider.setValue(0)
+        self.steeringlSlider.setValue(50)
         self.DataUpdate()
 
     def DataUpdate(self):
-        h_value = self.steeringlSlider.value()
+        s_value = self.steeringlSlider.value()
         t_value = self.throttleSlider.value()
         b_value = self.brakeSlider.value()
+        
         if self.serial_port and self.serial_port.is_open:
-            message = f"S-{h_value:03}, T-{t_value:03}, B-{b_value:03}\n"
+            message = f"S-{s_value:03}, T-{t_value:03}, B-{b_value:03}\n"
             self.serial_port.write(message.encode())
             print(f"Sent to Arduino: {message.strip()}")
-        self.label.setText(f"H-{h_value:03}, T-{t_value:03}, B-{b_value:03}")
+        self.label.setText(f"H-{s_value:03}, T-{t_value:03}, B-{b_value:03}")
         self.label.adjustSize()
-        print(f"H-{h_value:03}, T-{t_value:03}, B-{b_value:03}")
+        print(f"H-{s_value:03}, T-{t_value:03}, B-{b_value:03}")
 
     def closeEvent(self, event):
         if self.serial_port and self.serial_port.is_open:
