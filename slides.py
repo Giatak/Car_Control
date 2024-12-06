@@ -1,11 +1,12 @@
 from PyQt6 import QtCore, QtGui, QtWidgets
 import serial
 import pygame
-import threading
 from time import sleep
+
 
 class JoystickThread(QtCore.QThread):
     joystickMoved = QtCore.pyqtSignal(int, int, int)  # Signal to send throttle, brake, and steering values
+    joystickStatusChanged = QtCore.pyqtSignal(bool)  # Signal to notify joystick connection status
 
     def __init__(self):
         super().__init__()
@@ -23,15 +24,17 @@ class JoystickThread(QtCore.QThread):
                     self.joystick = pygame.joystick.Joystick(0)  # Use the first joystick
                     self.joystick.init()
                     self.joystick_found = True
+                    self.joystickStatusChanged.emit(True)
                     print(f"Joystick detected: {self.joystick.get_name()}")
                 elif joystick_count == 0 and self.joystick_found:
                     self.joystick_found = False
                     self.joystick = None
+                    self.joystickStatusChanged.emit(False)
                     print("Joystick disconnected")
 
                 if self.joystick_found:
                     pygame.event.pump()  # Process joystick events
-                    
+
                     # Get the X-axis value of the left joystick (steering)
                     joystick_x_value = self.joystick.get_axis(0)  # Left joystick X-axis for steering
                     # Get the Y-axis value of the right joystick (throttle/brake)
@@ -41,12 +44,12 @@ class JoystickThread(QtCore.QThread):
                     steering_value = int(joystick_x_value * 50 + 50)  # Normalize X-axis to [0, 100]
 
                     # Map the joystick Y-axis value to the throttle and brake ranges
-                    if joystick_y_value > 0:  # Joystick pushed up
-                        throttle_value = int(joystick_y_value * 100)  # Throttle increases as joystick moves up
+                    if joystick_y_value < 0:  # Joystick pushed up (forward)
+                        throttle_value = int(-joystick_y_value * 100)  # Throttle increases as joystick moves up
                         brake_value = 0  # Brake is 0 when throttle is applied
-                    else:  # Joystick pushed down
+                    else:  # Joystick pushed down (backward)
                         throttle_value = 0  # Throttle is 0 when brake is applied
-                        brake_value = int(-joystick_y_value * 100)  # Brake increases as joystick moves down
+                        brake_value = int(joystick_y_value * 100)  # Brake increases as joystick moves down
 
                     # Emit the signal to update the throttle, brake, and steering values in the main thread
                     self.joystickMoved.emit(throttle_value, brake_value, steering_value)
@@ -54,6 +57,7 @@ class JoystickThread(QtCore.QThread):
                 sleep(0.03)  # Sleep for a short time to prevent overwhelming the CPU
         except Exception as e:
             print(f"Error in JoystickThread: {e}")
+
 
 class Ui_MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
@@ -66,12 +70,13 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         # Initialize joystick thread
         self.joystick_thread = JoystickThread()
         self.joystick_thread.joystickMoved.connect(self.updateControlsFromJoystick)
+        self.joystick_thread.joystickStatusChanged.connect(self.handleJoystickStatus)
         self.joystick_thread.start()
 
-        self.is_W_pressed = False
-        self.is_S_pressed = False
-        self.start_value = 10
-        self.max_value = 100
+        self.joystick_connected = False  # Track if joystick is connected
+        self.steering_value = 50  # Default steering value for keyboard control
+
+        # Set initial slider values
         self.throttleSlider.setValue(0)  # Start throttle slider at 0
         self.brakeSlider.setValue(0)  # Start brake slider at 0
         self.steeringlSlider.setValue(50)  # Start steering at neutral position
@@ -85,9 +90,65 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         except serial.SerialException as e:
             print(f"Error: {e}")
 
+    def handleJoystickStatus(self, is_connected):
+        """Handle joystick connection status."""
+        self.joystick_connected = is_connected
+        print("Joystick connected" if is_connected else "Joystick disconnected")
+
+    def keyPressEvent(self, event):
+        """Handle key press events."""
+        if not self.joystick_connected:  # Only process if joystick is not connected
+            if event.key() == QtCore.Qt.Key.Key_A:
+                self.steering_value = max(0, self.steering_value - 5)  # Decrease steering
+                self.steeringlSlider.setValue(self.steering_value)
+                self.DataUpdate()
+            elif event.key() == QtCore.Qt.Key.Key_D:
+                self.steering_value = min(100, self.steering_value + 5)  # Increase steering
+                self.steeringlSlider.setValue(self.steering_value)
+                self.DataUpdate()
+
+            # Handle W and S keys for throttle and brake with mutual exclusion
+            elif event.key() == QtCore.Qt.Key.Key_W:
+                # Increase throttle by a larger step, set brake to 0
+                throttle_value = self.throttleSlider.value() + 10  # Faster increment (change 20 to any value)
+                self.throttleSlider.setValue(min(100, throttle_value))
+                self.brakeSlider.setValue(0)  # Set brake to 0
+                self.DataUpdate()
+            elif event.key() == QtCore.Qt.Key.Key_S:
+                # Increase brake by a larger step, set throttle to 0
+                brake_value = self.brakeSlider.value() + 10  # Faster increment (change 20 to any value)
+                self.brakeSlider.setValue(min(100, brake_value))
+                self.throttleSlider.setValue(0)  # Set throttle to 0
+                self.DataUpdate()
+            
+            elif event.key() == QtCore.Qt.Key.Key_Space:
+                self.resetControls()
+
+    def DataUpdate(self):
+        """Update the serial data and display."""
+        s_value = self.steeringlSlider.value()
+        t_value = self.throttleSlider.value()
+        b_value = self.brakeSlider.value()
+
+        if self.serial_port and self.serial_port.is_open:
+            message = f"S-{s_value:03}, T-{t_value:03}, B-{b_value:03}\n"
+            self.serial_port.write(message.encode())
+            print(f"Sent to Arduino: {message.strip()}")
+
+        self.label.setText(f"H-{s_value:03}, T-{t_value:03}, B-{b_value:03}")
+        self.label.adjustSize()
+        print(f"H-{s_value:03}, T-{t_value:03}, B-{b_value:03}")
+
+    def updateControlsFromJoystick(self, throttle_value, brake_value, steering_value):
+        """Update the throttle, brake, and steering sliders based on joystick input."""
+        if self.joystick_connected:
+            self.throttleSlider.setValue(throttle_value)
+            self.brakeSlider.setValue(brake_value)
+            self.steeringlSlider.setValue(steering_value)
+
     def setupUi(self, MainWindow):
         MainWindow.setObjectName("MainWindow")
-        MainWindow.resize(800, 475)
+        MainWindow.resize(600, 200)
 
         # Create the central widget
         self.centralwidget = QtWidgets.QWidget(parent=MainWindow)
@@ -139,34 +200,11 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         # Set the central widget for the main window
         MainWindow.setCentralWidget(self.centralwidget)
 
-        # Create menu bar
-        self.menubar = QtWidgets.QMenuBar(parent=MainWindow)
-        self.menubar.setGeometry(QtCore.QRect(0, 0, 800, 21))
-        self.menubar.setObjectName("menubar")
-
-        # Create File and Edit menus
-        self.menuFile = QtWidgets.QMenu(parent=self.menubar)
-        self.menuFile.setObjectName("menuFile")
-        self.menuEdit = QtWidgets.QMenu(parent=self.menubar)
-        self.menuEdit.setObjectName("menuEdit")
-        MainWindow.setMenuBar(self.menubar)
-
-        # Set up translations and shortcuts
-        self.retranslateUi(MainWindow)
-
         # Connect button click and slider value changes
         self.pushButton.clicked.connect(self.resetControls)
         self.steeringlSlider.valueChanged.connect(self.DataUpdate)
         self.throttleSlider.valueChanged.connect(self.DataUpdate)
         self.brakeSlider.valueChanged.connect(self.DataUpdate)
-
-    def retranslateUi(self, MainWindow):
-        _translate = QtCore.QCoreApplication.translate
-        MainWindow.setWindowTitle(_translate("MainWindow", "MainWindow"))
-        self.label.setText(_translate("MainWindow", "H-000, T-000, B-000"))
-        self.label.adjustSize()
-        self.pushButton.setText(_translate("MainWindow", "RESET THROTTLE"))
-        self.pushButton.setShortcut(_translate("MainWindow", "Space"))
 
     def resetControls(self):
         self.throttleSlider.setValue(0)
@@ -174,33 +212,16 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.steeringlSlider.setValue(50)
         self.DataUpdate()
 
-    def DataUpdate(self):
-        s_value = self.steeringlSlider.value()
-        t_value = self.throttleSlider.value()
-        b_value = self.brakeSlider.value()
-        
-        if self.serial_port and self.serial_port.is_open:
-            message = f"S-{s_value:03}, T-{t_value:03}, B-{b_value:03}\n"
-            self.serial_port.write(message.encode())
-            print(f"Sent to Arduino: {message.strip()}")
-        self.label.setText(f"H-{s_value:03}, T-{t_value:03}, B-{b_value:03}")
-        self.label.adjustSize()
-        print(f"H-{s_value:03}, T-{t_value:03}, B-{b_value:03}")
-
     def closeEvent(self, event):
         if self.serial_port and self.serial_port.is_open:
             self.serial_port.close()
             print("Serial port closed.")
         event.accept()
 
-    def updateControlsFromJoystick(self, throttle_value, brake_value, steering_value):
-        """Update the throttle, brake, and steering sliders based on joystick input."""
-        self.throttleSlider.setValue(throttle_value)
-        self.brakeSlider.setValue(brake_value)
-        self.steeringlSlider.setValue(steering_value)
 
 if __name__ == "__main__":
     import sys
+
     app = QtWidgets.QApplication(sys.argv)
     MainWindow = Ui_MainWindow()
     MainWindow.show()
