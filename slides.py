@@ -1,20 +1,60 @@
 from PyQt6 import QtCore, QtGui, QtWidgets
 import serial
 from time import sleep
+import pygame
+import threading
+
+class JoystickThread(QtCore.QThread):
+    joystickMoved = QtCore.pyqtSignal(int)
+
+    def __init__(self):
+        super().__init__()
+        pygame.init()
+
+        self.joystick_found = False
+        self.joystick = None
+
+    def run(self):
+        while True:
+            # Recheck joystick availability
+            joystick_count = pygame.joystick.get_count()
+            if joystick_count > 0 and not self.joystick_found:
+                self.joystick = pygame.joystick.Joystick(0)  # Use the first joystick
+                self.joystick.init()
+                self.joystick_found = True
+                print(f"Joystick detected: {self.joystick.get_name()}")
+            elif joystick_count == 0 and self.joystick_found:
+                self.joystick_found = False
+                self.joystick = None
+                print("Joystick disconnected")
+
+            if self.joystick_found:
+                pygame.event.pump()  # Process joystick events
+                axis_value = self.joystick.get_axis(0)  # Get the X-axis value (change the axis if needed)
+
+                # Map the joystick axis value to the slider range (0 to 100)
+                slider_value = int((axis_value + 1) * 50)  # axis_value ranges from -1 to 1, map to 0 to 100
+
+                # Emit the signal to update the slider value in the main thread
+                self.joystickMoved.emit(slider_value)
+
+            sleep(0.03)  # Sleep for a short time to prevent overwhelming the CPU
 
 class Ui_MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
+
         self.serial_port = None
         self.setupUi(self)
         self.setupSerial()
 
-        # Timer to handle the gradual increase of the vertical slider value
-        self.timer = QtCore.QTimer(self)
-        self.timer.setInterval(30)  # Adjust the interval to control speed
-        self.timer.timeout.connect(self.incrementSlider)
+        # Initialize joystick thread
+        self.joystick_thread = JoystickThread()
+        self.joystick_thread.joystickMoved.connect(self.updateSteeringSlider)
+        self.joystick_thread.start()
 
         self.is_W_pressed = False
+        self.is_S_pressed = False
         self.start_value = 10
         self.max_value = 100
         self.verticalSlider.setValue(0)  # Start slider at 0
@@ -53,7 +93,7 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         # Create a horizontal layout to group the sliders
         slider_layout = QtWidgets.QHBoxLayout()
 
-        # Create a horizontal slider
+        # Create a horizontal slider (steering)
         self.steeringlSlider = QtWidgets.QSlider(parent=self.centralwidget)
         self.steeringlSlider.setOrientation(QtCore.Qt.Orientation.Horizontal)
         self.steeringlSlider.setRange(0, 100)
@@ -94,34 +134,8 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.menuEdit.setObjectName("menuEdit")
         MainWindow.setMenuBar(self.menubar)
 
-        # Create actions for menu items
-        self.actionNew = QtGui.QAction(parent=MainWindow)
-        self.actionNew.setObjectName("actionNew")
-        self.actionSave = QtGui.QAction(parent=MainWindow)
-        self.actionSave.setObjectName("actionSave")
-        self.actionCopy = QtGui.QAction(parent=MainWindow)
-        self.actionCopy.setObjectName("actionCopy")
-        self.actionPaste = QtGui.QAction(parent=MainWindow)
-        self.actionPaste.setObjectName("actionPaste")
-
-        # Add actions to menus
-        self.menuFile.addAction(self.actionNew)
-        self.menuFile.addAction(self.actionSave)
-        self.menuEdit.addAction(self.actionCopy)
-        self.menuEdit.addAction(self.actionPaste)
-
-        # Add menus to the menu bar
-        self.menubar.addAction(self.menuFile.menuAction())
-        self.menubar.addAction(self.menuEdit.menuAction())
-
         # Set up translations and shortcuts
         self.retranslateUi(MainWindow)
-
-        # Connect signals for menu actions
-        self.actionNew.triggered.connect(lambda: self.clicked("New was clicked"))
-        self.actionSave.triggered.connect(lambda: self.clicked("Save was clicked"))
-        self.actionCopy.triggered.connect(lambda: self.clicked("Copy was clicked"))
-        self.actionPaste.triggered.connect(lambda: self.clicked("Paste was clicked"))
 
         # Connect button click and slider value changes
         self.pushButton.clicked.connect(self.resetTHROTTLE)
@@ -135,30 +149,6 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.label.adjustSize()
         self.pushButton.setText(_translate("MainWindow", "RESET THROTTLE"))
         self.pushButton.setShortcut(_translate("MainWindow", "Space"))
-
-        self.menuFile.setTitle(_translate("MainWindow", "File"))
-        self.menuEdit.setTitle(_translate("MainWindow", "Edit"))
-
-        self.actionNew.setText(_translate("MainWindow", "New"))
-        self.actionNew.setStatusTip(_translate("MainWindow", "Create a new file"))
-        self.actionNew.setShortcut(_translate("MainWindow", "Ctrl+N"))
-
-        self.actionSave.setText(_translate("MainWindow", "Save"))
-        self.actionSave.setStatusTip(_translate("MainWindow", "Save a file"))
-        self.actionSave.setShortcut(_translate("MainWindow", "Ctrl+S"))
-
-        self.actionCopy.setText(_translate("MainWindow", "Copy"))
-        self.actionCopy.setStatusTip(_translate("MainWindow", "Copy text"))
-        self.actionCopy.setShortcut(_translate("MainWindow", "Ctrl+C"))
-
-        self.actionPaste.setText(_translate("MainWindow", "Paste"))
-        self.actionPaste.setStatusTip(_translate("MainWindow", "Paste text"))
-        self.actionPaste.setShortcut(_translate("MainWindow", "Ctrl+V"))
-
-    def clicked(self, text):
-        self.label.setText(text)
-        self.label.adjustSize()
-        print(str(text))
 
     def resetTHROTTLE(self):
         self.verticalSlider.setValue(0)
@@ -181,28 +171,25 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
             print("Serial port closed.")
         event.accept()
 
-    def incrementSlider(self):
-        """Gradually increase the slider value"""
-        if not self.is_W_pressed:  # If "W" is not pressed, stop the timer
-            return
-
-        current_value = self.verticalSlider.value()
-        if current_value < self.max_value:
-            self.verticalSlider.setValue(min(current_value + 5, self.max_value))  # Increase in steps of 5
-            self.DataUpdate()  # Update the label and send data to Arduino when the value changes
+    def updateSteeringSlider(self, slider_value):
+        """Update the horizontal slider based on joystick X-axis movement."""
+        self.steeringlSlider.setValue(slider_value)
 
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key.Key_W and not self.is_W_pressed:
             self.is_W_pressed = True
-            if not self.timer.isActive():  # Start timer only when the key is pressed
-                self.timer.start()  
-        elif event.key() == QtCore.Qt.Key.Key_S:
-            self.verticalSlider.setValue(0)
-            self.DataUpdate()  # Update the label and send data when the value changes
+            self.verticalSlider.setValue(min(self.verticalSlider.value() + 5, 100))
+            self.DataUpdate()
+        elif event.key() == QtCore.Qt.Key.Key_S and not self.is_S_pressed:
+            self.is_S_pressed = True
+            self.verticalSlider.setValue(max(self.verticalSlider.value() - 5, 0))
+            self.DataUpdate()
 
     def keyReleaseEvent(self, event):
         if event.key() == QtCore.Qt.Key.Key_W:
-            self.is_W_pressed = False  # Stop the incrementing when the key is released
+            self.is_W_pressed = False  # Stop incrementing when the key is released
+        elif event.key() == QtCore.Qt.Key.Key_S:
+            self.is_S_pressed = False  # Stop decrementing when the key is released
 
 if __name__ == "__main__":
     import sys
